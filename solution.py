@@ -1,6 +1,9 @@
 """Solution."""
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
+from scipy.stats import norm
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF
 # import additional ...
 
 
@@ -15,7 +18,13 @@ class BO_algo():
     def __init__(self):
         """Initializes the algorithm with a parameter configuration."""
         # TODO: Define all relevant class members for your BO algorithm here.
-        pass
+        self.X = np.empty(shape=(0, DOMAIN.shape(0)))
+        self.f = np.empty(shape=0)
+        self.v = np.empty(shape=0)
+        self.f_kernel = 0.5 * RBF(length_scale=1)
+        self.model = GaussianProcessRegressor(kernel=self.f_kernel, alpha=0.01, normalize_y=True)
+        self.f_opt = 0.0
+        self.xi = 0.01
 
     def next_recommendation(self):
         """
@@ -79,7 +88,13 @@ class BO_algo():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        raise NotImplementedError
+        mu, std = self.f_model.predict(x, return_std=True)
+        values = np.zeros_like(mu)
+        mask = std > 0
+        improve = self.f_opt - self.xi - mu[mask]
+        scaled = improve / std[mask]
+        values[mask] = norm.cdf(scaled)
+        return values
 
     def add_data_point(self, x: float, f: float, v: float):
         """
@@ -95,7 +110,9 @@ class BO_algo():
             SA constraint func
         """
         # TODO: Add the observed data {x, f, v} to your model.
-        raise NotImplementedError
+        self.X = np.vstack((self.X, x))
+        self.f = np.hstack((self.f, f))
+        self.v = np.hstack((self.v, v))
 
     def get_solution(self):
         """
