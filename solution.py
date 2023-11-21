@@ -110,7 +110,7 @@ class BO_algo:
 
         return np.where(
             mu_v + 1.5 * std_v >= SAFETY_THRESHOLD,
-            mu_f + std_f * self.beta + penalty,
+            mu_f + std_f * self.beta - penalty,
             mu_f + std_f * self.beta,
         )
 
