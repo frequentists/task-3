@@ -31,14 +31,12 @@ class BO_algo:
         self.obj_model = GaussianProcessRegressor(
             kernel=ConstantKernel(constant_value=0.5) * RBF(1.0),
             alpha=self.var_f,
-            optimizer=None,
-            normalize_y=True,
+            normalize_y=False,
         )
         self.const_model = GaussianProcessRegressor(
             kernel=ConstantKernel(constant_value=4) + ConstantKernel(constant_value=sqrt(2)) * RBF(1.0),
             alpha=self.var_v,
-            optimizer=None,
-            normalize_y=True,
+            normalize_y=False,
         )
 
     def next_recommendation(self):
@@ -103,17 +101,16 @@ class BO_algo:
             shape (N, 1)
             Value of the acquisition function at x
         """
-        x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
 
         x = np.atleast_2d(x)
         mu_f, std_f = self.obj_model.predict(x, return_std=True)
         mu_v, std_v = self.const_model.predict(x, return_std=True)
-        penalty = 2
+        penalty = 8
 
         return np.where(
-            mu_v + 1.5 * std_v > SAFETY_THRESHOLD,
-            np.zeros_like(mu_f),
+            mu_v + 1.5 * std_v >= SAFETY_THRESHOLD,
+            mu_f + std_f * self.beta + penalty,
             mu_f + std_f * self.beta,
         )
 
@@ -135,6 +132,9 @@ class BO_algo:
         self.f = np.hstack((self.f, f))
         self.v = np.hstack((self.v, v))
 
+        self.obj_model.fit(X=self.X, y=self.f.T)
+        self.const_model.fit(X=self.X, y=self.v.T)
+
     def get_solution(self):
         """
         Return x_opt that is believed to be the maximizer of f.
@@ -151,7 +151,7 @@ class BO_algo:
             if self.v[i] < SAFETY_THRESHOLD and self.f[i] > max:
                 max = self.f[i]
                 idx = i
-        return self.X[i, 0]
+        return self.X[idx, 0]
 
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
