@@ -3,7 +3,7 @@ import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, DotProduct
+from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct
 from math import inf, sqrt
 
 # import additional ...
@@ -28,17 +28,14 @@ class BO_algo:
         self.var_v = 0.0001**2
 
         self.obj_model = GaussianProcessRegressor(
-            kernel=0.5 * RBF(length_scale=0.5),
+            kernel=0.5 * RBF(length_scale=1.0),
             alpha=self.var_f,
             normalize_y=False,
-            n_restarts_optimizer=5
         )
         self.const_model = GaussianProcessRegressor(
-            kernel=DotProduct(sigma_0=0)
-            + sqrt(2) * RBF(length_scale=0.5),
+            kernel=DotProduct(sigma_0=0) + sqrt(2) * RBF(length_scale=1.0),
             alpha=self.var_v,
             normalize_y=False,
-            n_restarts_optimizer=5
         )
 
         self.max = -inf
@@ -63,7 +60,6 @@ class BO_algo:
         if self.X.shape[0] == 0:
             return np.random.uniform(*DOMAIN[0])
         x_opt = self.optimize_acquisition_function()
-        x_opt = np.atleast_2d(x_opt)
         return x_opt
 
     def optimize_acquisition_function(self):
@@ -134,11 +130,20 @@ class BO_algo:
             return pi * const_prob
 
         elif self.acqui_mode == "ei":
-            const_prob = norm.cdf(SAFETY_THRESHOLD, mu_v, std_v)
-            obj_ei = (mu_f - self.max) * (
-                1 - norm.cdf(self.max, mu_f, std_f)
-            ) + std_f * norm.pdf(self.max, mu_f, std_f)
+            const_prob = norm.cdf(SAFETY_THRESHOLD, loc=mu_v, scale=std_v)
+            xi = 0.0
+            z_0 = mu_f - self.max - xi
+            obj_ei = (z_0) * (norm.cdf(z_0 / std_f)) + std_f * norm.pdf(z_0 / std_f)
             return obj_ei * const_prob
+            # if const_prob >= 0.97:
+            #     return obj_ei
+            # return 0.0
+
+            # return np.where(
+            #     mu_v + 1.5 * std_v <= SAFETY_THRESHOLD,
+            #     obj_ei,
+            #     np.zeros_like(mu_v),
+            # )
 
     def add_data_point(self, x: float, f: float, v: float):
         """
@@ -158,12 +163,12 @@ class BO_algo:
         self.f = np.hstack((self.f, f))
         self.v = np.hstack((self.v, v))
 
-        self.obj_model.fit(X=self.X, y=self.f.T)
+        self.obj_model.fit(X=self.X, y=self.f)
         self.const_model.fit(
-            X=self.X, y=self.v.T - SAFETY_THRESHOLD * np.ones_like(self.v.T)
+            X=self.X, y=self.v - SAFETY_THRESHOLD * np.ones_like(self.v)
         )
 
-        if v <= SAFETY_THRESHOLD and f > self.max:
+        if v < SAFETY_THRESHOLD and f > self.max:
             self.max = f
             self.idx = self.f.shape[0] - 1
 
