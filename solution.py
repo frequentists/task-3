@@ -3,7 +3,7 @@ import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+from sklearn.gaussian_process.kernels import Matern, ConstantKernel
 from math import inf, sqrt
 
 # import additional ...
@@ -27,17 +27,21 @@ class BO_algo:
         self.var_f = 0.15**2
         self.var_v = 0.0001**2
 
-        self.beta = 1
         self.obj_model = GaussianProcessRegressor(
-            kernel=ConstantKernel(constant_value=0.5) * RBF(1.0),
+            kernel=Matern(length_scale=1.0, nu=2.5),
             alpha=self.var_f,
             normalize_y=False,
         )
         self.const_model = GaussianProcessRegressor(
-            kernel=ConstantKernel(constant_value=4) + ConstantKernel(constant_value=sqrt(2)) * RBF(1.0),
+            kernel=ConstantKernel(constant_value=4) + Matern(length_scale=1.0, nu=2.5),
             alpha=self.var_v,
             normalize_y=False,
         )
+
+        self.max = -inf
+        self.idx = 0
+
+        self.acqui_mode = "ucb"
 
     def next_recommendation(self):
         """
@@ -53,6 +57,8 @@ class BO_algo:
         # In implementing this function, you may use
         # optimize_acquisition_function() defined below.
 
+        if self.X.shape[0] == 0:
+            return np.random.uniform(*DOMAIN[0])
         x_opt = self.optimize_acquisition_function()
         x_opt = np.atleast_2d(x_opt)
         return x_opt
@@ -106,13 +112,27 @@ class BO_algo:
         x = np.atleast_2d(x)
         mu_f, std_f = self.obj_model.predict(x, return_std=True)
         mu_v, std_v = self.const_model.predict(x, return_std=True)
-        penalty = 8
-
-        return np.where(
-            mu_v + 1.5 * std_v >= SAFETY_THRESHOLD,
-            mu_f + std_f * self.beta - penalty,
-            mu_f + std_f * self.beta,
-        )
+        
+        if self.acqui_mode == "ucb":
+            penalty = 8
+            beta = 1
+            return np.where(
+                mu_v + 1.5 * std_v >= SAFETY_THRESHOLD,
+                mu_f + std_f * beta - penalty,
+                mu_f + std_f * beta,
+            )
+        
+        elif self.acqui_mode == "pi":
+            const_prob = norm.cdf(SAFETY_THRESHOLD, mu_v, std_v)
+            pi = np.zeros_like(mu_f)
+            for i in range(mu_f.shape[0]):
+                pi[i] = 1 - norm.cdf(self.max, mu_f[i], std_f[i])
+            return pi * const_prob
+        
+        elif self.acqui_mode == "ei":
+            const_prob = norm.cdf(SAFETY_THRESHOLD, mu_v, std_v)
+            obj_ei = mu_f - self.max + norm.cdf(self.max, mu_f, std_f) * (self.max - mu_f) + std_f * norm.pdf(self.max, mu_f, std_f)
+            return obj_ei * const_prob
 
     def add_data_point(self, x: float, f: float, v: float):
         """
@@ -128,12 +148,18 @@ class BO_algo:
             SA constraint func
         """
         # TODO: Add the observed data {x, f, v} to your model.
+        if v >= SAFETY_THRESHOLD:
+            return
         self.X = np.vstack((self.X, x))
         self.f = np.hstack((self.f, f))
         self.v = np.hstack((self.v, v))
 
         self.obj_model.fit(X=self.X, y=self.f.T)
         self.const_model.fit(X=self.X, y=self.v.T)
+
+        if f > self.max:
+            self.max = f
+            self.idx = self.f.shape[0] - 1
 
     def get_solution(self):
         """
@@ -145,13 +171,7 @@ class BO_algo:
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
-        max = -inf
-        idx = 0
-        for i in range(self.X.shape[0]):
-            if self.v[i] < SAFETY_THRESHOLD and self.f[i] > max:
-                max = self.f[i]
-                idx = i
-        return self.X[idx, 0]
+        return self.X[self.idx, 0]
 
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
